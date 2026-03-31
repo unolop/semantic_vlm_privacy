@@ -1,0 +1,5 @@
+Support image: <image>
+Query image: <image>
+
+Find the object in the query image that matches the category shown in the support image.
+Return only native grounding text.

@@ -1,0 +1,16 @@
+You are given one query image and a support set of 16 candidate categories.
+
+Task:
+- Compare the query image against the support images.
+- Choose the single support category that best matches the target object in the query image.
+- Use the support images as the primary reference, not world knowledge alone.
+
+Instructions:
+- Focus on the object appearance in the query image and compare it with the support images.
+- If multiple support categories look similar, choose the closest visual match.
+- Return only the category name from the provided support set.
+- Do not explain your reasoning.
+- Do not output any extra text.
+
+Output format:
+<output>category name</output>
