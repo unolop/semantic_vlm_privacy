@@ -2,14 +2,32 @@
 
 Public code-only snapshot for the privacy challenge experiments.
 
-Included:
-- `challenge/protocols`: protocol implementations
-- `challenge/scripts`: training, evaluation, and data-prep scripts
-- `challenge/prompts`: prompt templates
-- `challenge/folds`: split definitions
-- `challenge/configs`: custom config overrides
+## Main files
+- `challenge/protocols/semantic_gdino_sam.py`
+  - main semantic pipeline module
+  - semantic controller
+  - proposal prompt refinement
+  - null policy
+  - G-DINO proposal collection
+  - optional reranking
+  - optional SAM
+- `challenge/scripts/run_semantic_gdino_sam_pipeline.py`
+  - main execution entrypoint
+- `challenge/protocols/qwen_gdino_sam.py`
+  - baseline protocol module
+- `challenge/scripts/eval_support_gdino_detector.py`
+  - detector-only support-set evaluator
+- `challenge/SEMANTIC_PIPELINE_STATUS.md`
+  - concise status note for the semantic pipeline
 
-Excluded:
+## Included
+- code
+- prompts
+- folds
+- config overrides
+- minimal public docs
+
+## Excluded
 - datasets
 - model weights and checkpoints
 - experiment outputs
@@ -17,4 +35,4 @@ Excluded:
 - internal planning documents
 
 ## External dependencies
-See `THIRD_PARTY.md` for the expected third-party repositories, checkpoints, and model downloads.
+See `THIRD_PARTY.md`.
