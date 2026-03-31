@@ -8,13 +8,14 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from PIL import Image, ImageDraw, ImageOps
+from PIL import ImageDraw
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from challenge.baseline.qwen_gdino_sam import GroundingDinoLocalizer
+from challenge.protocols.overlay_utils import draw_gt_annotation, draw_xywh_box, load_display_image, xywh_to_xyxy
+from challenge.protocols.qwen_gdino_sam import GroundingDinoLocalizer
 
 
 def parse_args() -> argparse.Namespace:
@@ -41,11 +42,6 @@ def resolve_output_dir(base_dir: str, flat_output: bool, date_tag: str | None, r
     return Path(base_dir).resolve() / (date_tag or now.strftime('%Y%m%d')) / (run_id or now.strftime('%H%M%S'))
 
 
-def xywh_to_xyxy(bbox: list[float]) -> list[float]:
-    x, y, w, h = bbox
-    return [x, y, x + w, y + h]
-
-
 def compute_iou_xyxy(box_a: list[float], box_b: list[float]) -> float:
     ax1, ay1, ax2, ay2 = box_a
     bx1, by1, bx2, by2 = box_b
@@ -63,19 +59,11 @@ def compute_iou_xyxy(box_a: list[float], box_b: list[float]) -> float:
 
 
 def save_overlay(image_path: Path, ann: dict[str, Any], results: list[dict[str, Any]], output_dir: Path) -> None:
-    image = ImageOps.exif_transpose(Image.open(image_path)).convert('RGB')
+    image = load_display_image(image_path)
     draw = ImageDraw.Draw(image)
-    gx1, gy1, gx2, gy2 = xywh_to_xyxy(ann['bbox'])
-    draw.rectangle([gx1, gy1, gx2, gy2], outline='lime', width=4)
-    draw.text((gx1, max(0, gy1 - 18)), 'GT bbox', fill='lime')
-    for polygon in ann.get('segmentation', []):
-        pts = [(polygon[i], polygon[i + 1]) for i in range(0, len(polygon), 2)]
-        if len(pts) >= 2:
-            draw.line(pts + [pts[0]], fill='yellow', width=3)
+    draw_gt_annotation(draw, ann, label=None, bbox_color='lime', polygon_color='yellow')
     for result in results:
-        x, y, w, h = result['bbox']
-        draw.rectangle([x, y, x + w, y + h], outline='red', width=4)
-        draw.text((x, max(0, y - 18)), f"PRED {result['label_text']} {result['score']:.2f}", fill='red')
+        draw_xywh_box(draw, result['bbox'], f"PRED {result['label_text']} {result['score']:.2f}", color='red', width=4)
     vis_dir = output_dir / 'visualizations'
     vis_dir.mkdir(parents=True, exist_ok=True)
     image.save(vis_dir / f'{image_path.stem}_gt_pred_overlay.jpg')

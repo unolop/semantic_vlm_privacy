@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import os
 import re
-import sys
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -13,14 +11,9 @@ import torch
 from PIL import Image
 from torchvision import ops
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-LLM2SEG_DIR = Path(os.environ.get('LLM2SEG_DIR', REPO_ROOT / 'third_party' / 'LLM2Seg'))
-if str(LLM2SEG_DIR) not in sys.path:
-    sys.path.insert(0, str(LLM2SEG_DIR))
-
-from call_vlm import SwiftVLMCaller
-from utils import preprocess_caption
-from challenge.baseline.qwen_gdino_sam import (
+from challenge.LLM2Seg.call_vlm import SwiftVLMCaller
+from challenge.LLM2Seg.utils import preprocess_caption
+from challenge.protocols.qwen_gdino_sam import (
     DetectionCandidate,
     GroundingDinoLocalizer,
     SamSegmenter,
@@ -28,58 +21,16 @@ from challenge.baseline.qwen_gdino_sam import (
     load_support_image_paths,
 )
 
-QUERY_ONLY_SEMANTIC_PROMPT = """
-You are given one query image.
-Analyze the image and identify the most likely private-object family and short detector-friendly prompts.
+PROMPTS_DIR = Path(__file__).resolve().parents[1] / 'prompts'
 
-Return only the following XML-like fields:
-<family>short coarse family such as financial document, receipt-like paper, newspaper page, payment card, medical form, plastic test device, pill bottle, tattoo sleeve</family>
-<summary>one short sentence describing the most likely target object appearance</summary>
-<cue>comma-separated detector prompts from coarse to specific</cue>
-<null>yes or no</null>
 
-Rules:
-- Prefer coarse family-level wording and short content descriptions that a detector can use.
-- Keep the cue list short, usually 2 to 4 items.
-- If no likely private target appears in the image, output <null>yes</null> and keep <cue>empty</cue>.
-- Do not output any extra text.
-""".strip()
+def _load_prompt(name: str) -> str:
+    return (PROMPTS_DIR / name).read_text().strip()
 
-SEMANTIC_CONTROLLER_PROMPT = """
-You are given support image(s) followed by one query image.
-Use the support images as the target reference and analyze the query image.
 
-Return only the following XML-like fields:
-<family>short coarse family such as financial document, receipt-like paper, newspaper page, payment card, medical form, plastic test device, pill bottle, tattoo sleeve</family>
-<summary>one short sentence describing the target object appearance in the query image</summary>
-<cue>comma-separated detector prompts from coarse to specific</cue>
-<null>yes or no</null>
-
-Rules:
-- The support images define the target object type.
-- Prefer coarse family-level wording and short content descriptions that a detector can use.
-- Keep the cue list short, usually 2 to 4 items.
-- If the query image likely does not contain the target, output <null>yes</null> and keep <cue>empty</cue>.
-- Do not output any extra text.
-""".strip()
-
-RERANK_PROMPT = """
-You are given support image(s) followed by one candidate crop from the query image.
-The support images show the target private object type.
-Decide whether the final candidate crop matches the same object type.
-
-Return only the following XML-like fields:
-<decision>yes or no</decision>
-<score>integer 0 to 100</score>
-<label>short object label</label>
-<reason>short phrase</reason>
-
-Rules:
-- Be strict.
-- Use a high score only if the crop clearly matches the support images.
-- If the crop is background or the wrong object, return <decision>no</decision>.
-- Do not output any extra text.
-""".strip()
+QUERY_ONLY_SEMANTIC_PROMPT = _load_prompt('semantic_query_only.txt')
+SEMANTIC_CONTROLLER_PROMPT = _load_prompt('semantic_support_query.txt')
+RERANK_PROMPT = _load_prompt('semantic_rerank.txt')
 
 NEGATIVE_VALUES = {'yes', 'true', '1'}
 LOW_SIGNAL_PROMPTS = {

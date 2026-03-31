@@ -8,13 +8,20 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from PIL import Image, ImageDraw, ImageOps
+from PIL import ImageDraw
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from challenge.semantic.semantic_gdino_sam import (
+from common.overlay_utils import (
+    draw_gt_annotation,
+    draw_segmentation_polygons,
+    draw_xywh_box,
+    draw_xyxy_box,
+    load_display_image,
+)
+from challenge.protocols.semantic_gdino_sam import (
     GroundingDinoLocalizer,
     ProposalReranker,
     SamSegmenter,
@@ -65,32 +72,24 @@ def resolve_output_dir(base_dir: str, flat_output: bool, date_tag: str | None, r
 
 def save_visualization(record: dict[str, Any], output_dir: Path, gt_ann: dict[str, Any] | None = None, gt_label: str | None = None) -> None:
     image_path = Path(record['query_image_path'])
-    image = ImageOps.exif_transpose(Image.open(image_path)).convert('RGB')
+    image = load_display_image(image_path)
     draw = ImageDraw.Draw(image)
 
     if gt_ann is not None:
-        gx, gy, gw, gh = gt_ann['bbox']
-        draw.rectangle([gx, gy, gx + gw, gy + gh], outline='lime', width=4)
-        label_text = f"GT {gt_label}" if gt_label else 'GT'
-        draw.text((gx, max(0, gy - 18)), label_text, fill='lime')
-        for polygon in gt_ann.get('segmentation', []):
-            points = [(polygon[i], polygon[i + 1]) for i in range(0, len(polygon), 2)]
-            if len(points) >= 2:
-                draw.line(points + [points[0]], fill='yellow', width=3)
+        draw_gt_annotation(draw, gt_ann, label=gt_label, bbox_color='lime', polygon_color='yellow')
 
     for idx, candidate in enumerate(record.get('proposal_candidates', []), start=1):
-        x1, y1, x2, y2 = candidate['bbox_xyxy']
-        draw.rectangle([x1, y1, x2, y2], outline='yellow', width=2)
-        draw.text((x1, max(0, y1 - 16)), f"P{idx}:{candidate['label_text']} {candidate['score']:.2f}", fill='yellow')
+        draw_xyxy_box(
+            draw,
+            candidate['bbox_xyxy'],
+            f"P{idx}:{candidate['label_text']} {candidate['score']:.2f}",
+            color='yellow',
+            width=2,
+        )
 
     for result in record.get('results', []):
-        x, y, w, h = result['bbox']
-        draw.rectangle([x, y, x + w, y + h], outline='red', width=4)
-        draw.text((x, max(0, y - 18)), f"SEL {result['label_text']} {result['score']:.2f}", fill='red')
-        for polygon in result.get('segmentation', []):
-            points = [(polygon[i], polygon[i + 1]) for i in range(0, len(polygon), 2)]
-            if len(points) >= 2:
-                draw.line(points + [points[0]], fill='cyan', width=2)
+        draw_xywh_box(draw, result['bbox'], f"SEL {result['label_text']} {result['score']:.2f}", color='red', width=4)
+        draw_segmentation_polygons(draw, result.get('segmentation', []), color='cyan', width=2)
 
     vis_dir = output_dir / 'visualizations'
     vis_dir.mkdir(parents=True, exist_ok=True)
@@ -116,6 +115,7 @@ def main() -> None:
         if not args.support_dir or not args.support_json:
             raise ValueError('support_query mode requires --support-dir and --support-json')
         support_image_paths = load_support_image_paths(args.support_json, args.support_dir)
+
     controller = SemanticController(
         model_path=args.llm_model,
         max_new_tokens=args.llm_max_new_tokens,
@@ -160,7 +160,7 @@ def main() -> None:
 
     (output_dir / 'semantic_pipeline_results.json').write_text(json.dumps(outputs, ensure_ascii=False, indent=2))
     (output_dir / 'run_config.json').write_text(json.dumps(vars(args), ensure_ascii=False, indent=2))
-    print(f'Saved semantic pipeline outputs to: {output_dir / "semantic_pipeline_results.json"}')
+    print(f"Saved semantic pipeline outputs to: {output_dir / 'semantic_pipeline_results.json'}")
 
 
 if __name__ == '__main__':

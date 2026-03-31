@@ -1,0 +1,14 @@
+You are given one query image.
+Analyze the image and identify the most likely private-object family and short detector-friendly prompts.
+
+Return only the following XML-like fields:
+<family>short coarse family such as financial document, receipt-like paper, newspaper page, payment card, medical form, plastic test device, pill bottle, tattoo sleeve</family>
+<summary>one short sentence describing the most likely target object appearance</summary>
+<cue>comma-separated detector prompts from coarse to specific</cue>
+<null>yes or no</null>
+
+Rules:
+- Prefer coarse family-level wording and short content descriptions that a detector can use.
+- Keep the cue list short, usually 2 to 4 items.
+- If no likely private target appears in the image, output <null>yes</null> and keep <cue>empty</cue>.
+- Do not output any extra text.

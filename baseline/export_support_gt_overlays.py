@@ -5,7 +5,9 @@ import argparse
 import json
 from pathlib import Path
 
-from PIL import Image, ImageDraw, ImageOps
+from PIL import ImageDraw
+
+from common.overlay_utils import draw_gt_annotation, load_display_image
 
 
 def parse_args() -> argparse.Namespace:
@@ -17,11 +19,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument('--draw-bbox', action='store_true', help='Draw GT bbox')
     parser.add_argument('--draw-polygon', action='store_true', help='Draw GT segmentation polygon')
     return parser.parse_args()
-
-
-def xywh_to_xyxy(bbox: list[float]) -> list[float]:
-    x, y, w, h = bbox
-    return [x, y, x + w, y + h]
 
 
 def main() -> None:
@@ -45,20 +42,18 @@ def main() -> None:
         ann = image_id_to_ann[image_id]
         image_path = Path(args.support_dir) / image_info['file_name']
 
-        image = ImageOps.exif_transpose(Image.open(image_path)).convert('RGB')
+        image = load_display_image(image_path)
         draw = ImageDraw.Draw(image)
         label = category_id_to_name[ann['category_id']]
 
-        if args.draw_bbox:
-            x1, y1, x2, y2 = xywh_to_xyxy(ann['bbox'])
-            draw.rectangle([x1, y1, x2, y2], outline='lime', width=4)
-            draw.text((x1, max(0, y1 - 18)), f'GT bbox: {label}', fill='lime')
-
-        if args.draw_polygon:
-            for polygon in ann.get('segmentation', []):
-                pts = [(polygon[i], polygon[i + 1]) for i in range(0, len(polygon), 2)]
-                if len(pts) >= 2:
-                    draw.line(pts + [pts[0]], fill='yellow', width=3)
+        if args.draw_bbox or args.draw_polygon:
+            draw_gt_annotation(
+                draw,
+                ann,
+                label=label if args.draw_bbox else None,
+                bbox_color='lime',
+                polygon_color='yellow',
+            )
 
         out_path = output_dir / f"{Path(image_info['file_name']).stem}_gt_overlay.jpg"
         image.save(out_path)

@@ -1,9 +1,0 @@
-Return only the category name.
-
-Requirements:
-- Output one category name only.
-- No explanation.
-- No extra words.
-
-Output format:
-<output>category name</output>

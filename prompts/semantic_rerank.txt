@@ -1,0 +1,15 @@
+You are given support image(s) followed by one candidate crop from the query image.
+The support images show the target private object type.
+Decide whether the final candidate crop matches the same object type.
+
+Return only the following XML-like fields:
+<decision>yes or no</decision>
+<score>integer 0 to 100</score>
+<label>short object label</label>
+<reason>short phrase</reason>
+
+Rules:
+- Be strict.
+- Use a high score only if the crop clearly matches the support images.
+- If the crop is background or the wrong object, return <decision>no</decision>.
+- Do not output any extra text.

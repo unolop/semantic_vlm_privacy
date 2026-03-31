@@ -1,0 +1,15 @@
+You are given support image(s) followed by one query image.
+Use the support images as the target reference and analyze the query image.
+
+Return only the following XML-like fields:
+<family>short coarse family such as financial document, receipt-like paper, newspaper page, payment card, medical form, plastic test device, pill bottle, tattoo sleeve</family>
+<summary>one short sentence describing the target object appearance in the query image</summary>
+<cue>comma-separated detector prompts from coarse to specific</cue>
+<null>yes or no</null>
+
+Rules:
+- The support images define the target object type.
+- Prefer coarse family-level wording and short content descriptions that a detector can use.
+- Keep the cue list short, usually 2 to 4 items.
+- If the query image likely does not contain the target, output <null>yes</null> and keep <cue>empty</cue>.
+- Do not output any extra text.
