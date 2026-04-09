@@ -43,6 +43,25 @@ PRIORITY_FAMILY_TERMS = (
     'document', 'paper', 'receipt', 'newspaper', 'card', 'bottle', 'prescription',
     'record', 'statement', 'report', 'transcript', 'test', 'box', 'sleeve', 'letter',
 )
+FAMILY_CATEGORY_MAP = {
+    'addressed correspondence': ['letters with address', 'bills or receipt'],
+    'correspondence': ['letters with address', 'bills or receipt'],
+    'statement or report document': ['bank statement', 'mortgage or investment report'],
+    'financial document': ['bank statement', 'mortgage or investment report'],
+    'medical document': ['doctors prescription', 'medical record document'],
+    'educational record': ['transcript'],
+    'printed financial card': ['credit or debit card'],
+    'visual identity card': ['business card'],
+    'print media': ['local newspaper'],
+    'health indicator': [
+        'pregnancy test',
+        'pregnancy test box',
+        'condom box',
+        'condom with plastic bag',
+        'empty pill bottle',
+    ],
+    'tattoo sleeve': ['tattoo sleeve'],
+}
 DESCRIPTIVE_SPLIT_PATTERNS = (
     r'\bsuggesting\b',
     r'\bshowing\b',
@@ -689,126 +708,14 @@ def finalize_candidate_results(
     return _finalize_candidate_results(segmenter, query_image_path, candidates, image_id, use_sam)
 
 
-def _context_contains_any(context: str, tokens: Sequence[str]) -> bool:
-    return any(token in context for token in tokens)
-
-
-def _infer_health_indicator_subfamily(context: str) -> str:
-    if _context_contains_any(context, ['pill bottle', 'medicine bottle', 'prescription bottle', 'medication bottle', 'cylindrical bottle', 'container', 'bottle']):
-        return 'bottle'
-    if _context_contains_any(context, ['pregnancy test box', 'boxed pregnancy test', 'clearblue box', 'test kit box', 'retail box', 'box']):
-        return 'box'
-    if _context_contains_any(context, ['pregnancy test', 'plastic test device', 'urine test', 'medical test', 'test stick', 'test device']):
-        return 'test'
-    if _context_contains_any(context, ['condom', 'plastic bag', 'wrapped package', 'foil packet', 'small packet', 'wrapped item', 'packet']):
-        return 'wrapped item'
-    return 'generic'
-
-
 def _build_category_shortlist(semantic: SemanticCue, allowed_categories: Sequence[str]) -> list[str]:
     allowed_categories = list(allowed_categories)
     if not allowed_categories:
         return []
 
     family = _normalize_phrase(semantic.family)
-    prompt_text = _normalize_phrase(' '.join(semantic.proposal_prompts))
-    context = ' '.join(part for part in [family, prompt_text] if part)
-
-    def pick(*names: str) -> list[str]:
-        seen = set()
-        picked: list[str] = []
-        normalized_allowed = {
-            _normalize_phrase(category).replace(' ', '_'): category for category in allowed_categories
-        }
-        for name in names:
-            resolved_name = normalized_allowed.get(_normalize_phrase(name).replace(' ', '_'))
-            if resolved_name is None or resolved_name in seen:
-                continue
-            picked.append(resolved_name)
-            seen.add(resolved_name)
-        return picked
-
-    shortlist: list[str] = []
-    if family == 'printed financial card':
-        shortlist = pick('credit or debit card')
-    elif family == 'visual identity card':
-        shortlist = pick('business card')
-    elif family == 'print media':
-        shortlist = pick('local newspaper')
-    elif family == 'medical document':
-        if any(token in context for token in ['prescription', 'rx', 'doctor']):
-            shortlist = pick('doctors prescription', 'medical record document')
-        else:
-            shortlist = pick('medical record document', 'doctors prescription')
-    elif family == 'educational record':
-        shortlist = pick('transcript')
-    elif family == 'addressed correspondence':
-        shortlist = pick('letters with address', 'bills or receipt')
-    elif family == 'statement or report document':
-        if _context_contains_any(context, ['mortgage', 'investment', 'annual report', 'financial report']):
-            shortlist = pick('mortgage or investment report', 'bank statement')
-        elif _context_contains_any(context, ['bank statement', 'account statement', 'account details', 'account', 'balance', 'routing', 'deposit']):
-            shortlist = pick('bank statement', 'mortgage or investment report')
-        else:
-            shortlist = pick('mortgage or investment report', 'bank statement')
-    elif family == 'health indicator':
-        health_subfamily = _infer_health_indicator_subfamily(context)
-        if health_subfamily == 'bottle':
-            shortlist = pick('empty pill bottle')
-        elif health_subfamily == 'box':
-            if _context_contains_any(context, ['condom box', 'boxed condom', 'retail condom package', 'contraceptive box']):
-                shortlist = pick('condom box', 'condom with plastic bag')
-            else:
-                shortlist = pick('pregnancy test box', 'condom box', 'pregnancy test')
-        elif health_subfamily == 'test':
-            shortlist = pick('pregnancy test', 'pregnancy test box')
-        elif health_subfamily == 'wrapped item':
-            shortlist = pick('condom with plastic bag', 'condom box')
-        else:
-            shortlist = pick(
-                'pregnancy test',
-                'pregnancy test box',
-                'condom with plastic bag',
-                'condom box',
-                'empty pill bottle',
-            )
-    elif family == 'tattoo sleeve':
-        shortlist = pick('tattoo sleeve')
-
-    if not shortlist:
-        if 'business card' in context:
-            shortlist = pick('business card')
-        elif any(token in context for token in ['visa', 'credit card', 'debit card', 'payment card', 'plastic card']):
-            shortlist = pick('credit or debit card')
-        elif any(token in context for token in ['pregnancy test box', 'boxed pregnancy test', 'boxed test', 'box test', 'test kit box']):
-            shortlist = pick('pregnancy test box', 'pregnancy test')
-        elif any(token in context for token in ['pregnancy test', 'plastic test device', 'urine test', 'medical test', 'test stick']):
-            shortlist = pick('pregnancy test', 'pregnancy test box')
-        elif any(token in context for token in ['tattoo sleeve', 'patterned sleeve', 'sleeve']) or family == 'clothing':
-            shortlist = pick('tattoo sleeve')
-        elif any(token in context for token in ['newspaper', 'qr code']):
-            shortlist = pick('local newspaper')
-        elif any(token in context for token in ['prescription', 'doctor', 'rx']):
-            shortlist = pick('doctors prescription', 'medical record document')
-        elif any(token in context for token in ['medical form', 'health form', 'patient form', 'medical record']):
-            shortlist = pick('medical record document', 'doctors prescription')
-        elif any(token in context for token in ['mortgage', 'investment report', 'financial document']):
-            shortlist = pick('mortgage or investment report', 'bank statement', 'transcript')
-        elif any(token in context for token in ['bank statement', 'account statement']):
-            shortlist = pick('bank statement', 'mortgage or investment report')
-        elif 'address' in context or 'letter' in context or 'envelope' in context:
-            shortlist = pick('letters with address', 'bills or receipt')
-        elif 'transcript' in context:
-            shortlist = pick('transcript')
-        elif any(token in context for token in ['receipt', 'bills', 'transaction details', 'merchant receipt', 'itemized receipt']):
-            shortlist = pick('bills or receipt', 'letters with address')
-        elif any(token in context for token in ['pill bottle', 'medicine bottle', 'prescription bottle', 'medical container', 'blue bottle', 'white bottle', 'cylindrical container']):
-            shortlist = pick('empty pill bottle')
-        elif 'condom box' in context:
-            shortlist = pick('condom box')
-        elif any(token in context for token in ['condom', 'plastic bag', 'foil packet', 'small packet']):
-            shortlist = pick('condom with plastic bag', 'condom box')
-
+    shortlist = FAMILY_CATEGORY_MAP.get(family, [])
+    shortlist = [category for category in shortlist if category in allowed_categories]
     if not shortlist:
         shortlist = allowed_categories
     return shortlist
