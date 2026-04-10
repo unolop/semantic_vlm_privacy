@@ -1,6 +1,7 @@
 _base_ = [
-    '_base_/datasets/coco_detection.py',
-    '_base_/schedules/schedule_1x.py', '_base_/default_runtime.py'
+    '/home/david/miniconda3/envs/sem_mmdet_pip/lib/python3.10/site-packages/mmdet/.mim/configs/_base_/datasets/coco_detection.py',
+    '/home/david/miniconda3/envs/sem_mmdet_pip/lib/python3.10/site-packages/mmdet/.mim/configs/_base_/schedules/schedule_1x.py',
+    '/home/david/miniconda3/envs/sem_mmdet_pip/lib/python3.10/site-packages/mmdet/.mim/configs/_base_/default_runtime.py',
 ]
 load_from = 'https://download.openmmlab.com/mmdetection/v3.0/grounding_dino/groundingdino_swint_ogc_mmdet-822d7e9d.pth'  # noqa
 from os import getenv
@@ -40,7 +41,7 @@ model = dict(
         drop_path_rate=0.2,
         patch_norm=True,
         out_indices=(1, 2, 3),
-        with_cp=True,
+        with_cp=False,
         convert_weights=False),
     neck=dict(
         type='ChannelMapper',
@@ -53,7 +54,7 @@ model = dict(
         num_outs=4),
     encoder=dict(
         num_layers=6,
-        num_cp=6,
+        num_cp=0,
         # visual layer config
         layer_cfg=dict(
             self_attn_cfg=dict(embed_dims=256, num_levels=4, dropout=0.0),

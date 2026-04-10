@@ -3,11 +3,38 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Sequence
 
-from PIL import Image, ImageDraw, ImageOps
+from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 
 def load_display_image(image_path: str | Path) -> Image.Image:
     return ImageOps.exif_transpose(Image.open(image_path)).convert('RGB')
+
+
+def _load_overlay_font(size: int = 42) -> ImageFont.ImageFont:
+    for candidate in (
+        '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf',
+        '/usr/share/fonts/truetype/liberation2/LiberationSans-Bold.ttf',
+    ):
+        path = Path(candidate)
+        if path.exists():
+            return ImageFont.truetype(str(path), size=size)
+    return ImageFont.load_default()
+
+
+def _draw_labeled_text(
+    draw: ImageDraw.ImageDraw,
+    position: tuple[float, float],
+    text: str,
+    fill: str,
+) -> None:
+    font = _load_overlay_font()
+    x, y = position
+    left, top, right, bottom = draw.textbbox((x, y), text, font=font)
+    pad_x = 12
+    pad_y = 8
+    bg_box = [left - pad_x, top - pad_y, right + pad_x, bottom + pad_y]
+    draw.rectangle(bg_box, fill='black')
+    draw.text((x, y), text, fill=fill, font=font, stroke_width=3, stroke_fill='black')
 
 
 def xywh_to_xyxy(bbox: Sequence[float]) -> list[float]:
@@ -25,7 +52,7 @@ def draw_gt_annotation(
     x1, y1, x2, y2 = xywh_to_xyxy(ann['bbox'])
     draw.rectangle([x1, y1, x2, y2], outline=bbox_color, width=4)
     text = f'GT {label}'.strip() if label else 'GT'
-    draw.text((x1, max(0, y1 - 18)), text, fill=bbox_color)
+    _draw_labeled_text(draw, (x1, max(0, y1 - 52)), text, fill=bbox_color)
     for polygon in ann.get('segmentation', []):
         pts = [(polygon[i], polygon[i + 1]) for i in range(0, len(polygon), 2)]
         if len(pts) >= 2:
@@ -41,7 +68,7 @@ def draw_xyxy_box(
 ) -> None:
     x1, y1, x2, y2 = xyxy
     draw.rectangle([x1, y1, x2, y2], outline=color, width=width)
-    draw.text((x1, max(0, y1 - 18)), label, fill=color)
+    _draw_labeled_text(draw, (x1, max(0, y1 - 52)), label, fill=color)
 
 
 def draw_xywh_box(
@@ -53,7 +80,7 @@ def draw_xywh_box(
 ) -> None:
     x, y, w, h = bbox
     draw.rectangle([x, y, x + w, y + h], outline=color, width=width)
-    draw.text((x, max(0, y - 18)), label, fill=color)
+    _draw_labeled_text(draw, (x, max(0, y - 52)), label, fill=color)
 
 
 def draw_segmentation_polygons(

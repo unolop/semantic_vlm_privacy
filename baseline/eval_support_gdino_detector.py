@@ -10,7 +10,7 @@ from typing import Any
 
 from PIL import ImageDraw
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
@@ -29,6 +29,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument('--box-threshold', type=float, default=0.35)
     parser.add_argument('--text-threshold', type=float, default=0.25)
     parser.add_argument('--limit', type=int, default=None)
+    parser.add_argument('--image-id', type=int, default=None)
     parser.add_argument('--date-tag', default=None)
     parser.add_argument('--run-id', default=None)
     parser.add_argument('--flat-output', action='store_true')
@@ -78,6 +79,8 @@ def main() -> None:
     images = payload['images']
     annotations = payload['annotations']
     categories = payload['categories']
+    if args.image_id is not None:
+        images = [img for img in images if img['id'] == args.image_id]
     if args.limit is not None:
         images = images[:args.limit]
 
