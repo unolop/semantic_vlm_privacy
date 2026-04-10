@@ -1,7 +1,6 @@
 _base_ = [
-    '/home/david/miniconda3/envs/sem_mmdet_pip/lib/python3.10/site-packages/mmdet/.mim/configs/_base_/datasets/coco_detection.py',
-    '/home/david/miniconda3/envs/sem_mmdet_pip/lib/python3.10/site-packages/mmdet/.mim/configs/_base_/schedules/schedule_1x.py',
-    '/home/david/miniconda3/envs/sem_mmdet_pip/lib/python3.10/site-packages/mmdet/.mim/configs/_base_/default_runtime.py',
+    '_base_/datasets/coco_detection.py',
+    '_base_/schedules/schedule_1x.py', '_base_/default_runtime.py'
 ]
 load_from = 'https://download.openmmlab.com/mmdetection/v3.0/grounding_dino/groundingdino_swint_ogc_mmdet-822d7e9d.pth'  # noqa
 from os import getenv
