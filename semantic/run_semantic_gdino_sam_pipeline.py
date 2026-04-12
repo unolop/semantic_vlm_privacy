@@ -25,7 +25,6 @@ from common.overlay_utils import (
     load_display_image,
 )
 from common.vlm import SwiftVLMCaller
-from common.vlm import release_torch_runtime
 from semantic.semantic_gdino_sam import (
     GroundingDinoLocalizer,
     ProposalCalibrator,
@@ -69,6 +68,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument('--calibration-mode', choices=['legacy', 'reference_match'], default='legacy')
     parser.add_argument('--reference-source', choices=['crop', 'full_image'], default='crop')
     parser.add_argument('--classification-top-k', type=int, default=None)
+    parser.add_argument('--family-map-json', default=None, help='Path to JSON file overriding FAMILY_CATEGORY_MAP')
     parser.add_argument('--runtime-stats-jsonl', default=None)
     parser.add_argument('--cuda-cleanup-interval', type=int, default=1)
     return parser.parse_args()
@@ -140,6 +140,10 @@ def main() -> None:
     output_dir = resolve_output_dir(args.output_dir, args.flat_output, args.date_tag, args.run_id)
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    family_map: dict | None = None
+    if args.family_map_json:
+        family_map = json.loads(Path(args.family_map_json).read_text())
+
     dataset = json.loads(Path(args.json_path).read_text())
     images = dataset['images']
     annotations_by_image = {ann['image_id']: ann for ann in dataset.get('annotations', [])}
@@ -163,7 +167,6 @@ def main() -> None:
         decoding_mode=args.llm_decoding_mode,
         seed=args.llm_seed,
         max_pixels=args.llm_max_pixels,
-        device=args.device,
     )
     controller = SemanticController(
         model_path=args.llm_model,
@@ -211,6 +214,7 @@ def main() -> None:
                 use_sam=not args.disable_sam,
                 null_policy=args.null_policy,
                 classification_top_k=args.classification_top_k,
+                family_map=family_map,
             )
             if torch.cuda.is_available() and str(args.device).startswith('cuda'):
                 torch.cuda.synchronize(args.device)
@@ -256,7 +260,8 @@ def main() -> None:
                 gt_label = categories_by_id.get(gt_ann['category_id']) if gt_ann else None
                 save_visualization(record, output_dir, gt_ann=gt_ann, gt_label=gt_label)
             if args.cuda_cleanup_interval > 0 and index % args.cuda_cleanup_interval == 0:
-                release_torch_runtime()
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
         progress.close()
     finally:
         if runtime_stats_fh is not None:

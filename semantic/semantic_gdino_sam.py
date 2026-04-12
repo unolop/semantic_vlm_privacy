@@ -9,6 +9,17 @@ from typing import Any, Sequence
 
 import mmcv
 import torch
+
+if hasattr(torch.utils, "_pytree"):
+    _pytree = torch.utils._pytree
+    if not hasattr(_pytree, "register_pytree_node") and hasattr(_pytree, "_register_pytree_node"):
+        def _compat_register_pytree_node(*args, **kwargs):
+            kwargs.pop("serialized_type_name", None)
+            kwargs.pop("to_dumpable_context", None)
+            kwargs.pop("from_dumpable_context", None)
+            return _pytree._register_pytree_node(*args, **kwargs)
+        _pytree.register_pytree_node = _compat_register_pytree_node
+
 from PIL import Image
 from torchvision import ops
 
@@ -20,7 +31,7 @@ from baseline.qwen_gdino_sam import (
     load_support_image_paths,
 )
 from common.text_utils import preprocess_caption
-from common.vlm import SwiftVLMCaller, release_torch_runtime
+from common.vlm import SwiftVLMCaller
 
 PROMPTS_DIR = Path(__file__).resolve().parents[1] / 'prompts' / 'active'
 
@@ -61,6 +72,31 @@ FAMILY_CATEGORY_MAP = {
         'empty pill bottle',
     ],
     'tattoo sleeve': ['tattoo sleeve'],
+    # --- aliases observed from Qwen3-VL-4B outputs ---
+    'transactional paper': ['bank statement', 'bills or receipt', 'letters with address', 'transcript'],
+    'transaction paper': ['bank statement', 'bills or receipt', 'letters with address', 'transcript'],
+    'financial record': ['bank statement', 'mortgage or investment report'],
+    'financial statement': ['bank statement', 'mortgage or investment report'],
+    'financial report': ['bank statement', 'mortgage or investment report'],
+    'medical prescription': ['doctors prescription'],
+    'prescription': ['doctors prescription'],
+    'prescription document': ['doctors prescription'],
+    'medical record': ['medical record document', 'doctors prescription'],
+    'personal document': ['letters with address', 'bills or receipt'],
+    'formal document': ['letters with address', 'bank statement', 'mortgage or investment report'],
+    'newspaper': ['local newspaper'],
+    'news media': ['local newspaper'],
+    'payment card': ['credit or debit card'],
+    'bank card': ['credit or debit card'],
+    'academic record': ['transcript'],
+    'academic document': ['transcript'],
+    'contraceptive product': ['condom box', 'condom with plastic bag'],
+    'contraceptive packaging': ['condom box', 'condom with plastic bag'],
+    'medication container': ['empty pill bottle'],
+    'pill bottle': ['empty pill bottle'],
+    'pregnancy indicator': ['pregnancy test', 'pregnancy test box'],
+    'contact card': ['business card'],
+    'professional card': ['business card'],
 }
 DESCRIPTIVE_SPLIT_PATTERNS = (
     r'\bsuggesting\b',
@@ -254,6 +290,7 @@ class SemanticGdinoSamPipeline:
         use_sam: bool = True,
         null_policy: str = 'strict',
         classification_top_k: int | None = None,
+        family_map: dict[str, list[str]] | None = None,
     ) -> dict[str, Any]:
         support_image_paths = list(support_image_paths or [])
         category_names = list(category_names or [])
@@ -263,7 +300,7 @@ class SemanticGdinoSamPipeline:
             if support_image_paths
             else self.controller.infer_query_only(query_image_path)
         )
-        category_shortlist = _build_category_shortlist(semantic, category_names)
+        category_shortlist = _build_category_shortlist(semantic, category_names, family_map=family_map)
         proposal_candidates: list[dict[str, Any]] = []
         calibration_logs: list[dict[str, Any]] = []
         selected_result: list[dict[str, Any]] = []
@@ -620,7 +657,8 @@ def _save_candidate_crop(query_image_path: str, xyxy: Sequence[float]) -> str:
         finally:
             crop.close()
             image.close()
-            release_torch_runtime()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
 
 
 def _build_support_reference_crops(
@@ -708,13 +746,18 @@ def finalize_candidate_results(
     return _finalize_candidate_results(segmenter, query_image_path, candidates, image_id, use_sam)
 
 
-def _build_category_shortlist(semantic: SemanticCue, allowed_categories: Sequence[str]) -> list[str]:
+def _build_category_shortlist(
+    semantic: SemanticCue,
+    allowed_categories: Sequence[str],
+    family_map: dict[str, list[str]] | None = None,
+) -> list[str]:
     allowed_categories = list(allowed_categories)
     if not allowed_categories:
         return []
 
+    fmap = family_map if family_map is not None else FAMILY_CATEGORY_MAP
     family = _normalize_phrase(semantic.family)
-    shortlist = FAMILY_CATEGORY_MAP.get(family, [])
+    shortlist = fmap.get(family, [])
     shortlist = [category for category in shortlist if category in allowed_categories]
     if not shortlist:
         shortlist = allowed_categories

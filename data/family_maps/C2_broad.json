@@ -1,0 +1,186 @@
+{
+  "document": [
+    "bank statement",
+    "bills or receipt",
+    "letters with address",
+    "transcript",
+    "mortgage or investment report",
+    "doctors prescription",
+    "medical record document",
+    "local newspaper"
+  ],
+  "paper": [
+    "bank statement",
+    "bills or receipt",
+    "letters with address",
+    "transcript",
+    "mortgage or investment report",
+    "doctors prescription",
+    "medical record document",
+    "local newspaper"
+  ],
+  "transactional paper": [
+    "bank statement",
+    "bills or receipt",
+    "letters with address",
+    "transcript"
+  ],
+  "transaction paper": [
+    "bank statement",
+    "bills or receipt",
+    "letters with address",
+    "transcript"
+  ],
+  "financial document": [
+    "bank statement",
+    "mortgage or investment report",
+    "bills or receipt"
+  ],
+  "financial record": [
+    "bank statement",
+    "mortgage or investment report",
+    "bills or receipt"
+  ],
+  "financial statement": [
+    "bank statement",
+    "mortgage or investment report"
+  ],
+  "financial report": [
+    "bank statement",
+    "mortgage or investment report"
+  ],
+  "statement or report document": [
+    "bank statement",
+    "mortgage or investment report"
+  ],
+  "medical document": [
+    "doctors prescription",
+    "medical record document"
+  ],
+  "medical record": [
+    "doctors prescription",
+    "medical record document"
+  ],
+  "medical prescription": [
+    "doctors prescription",
+    "medical record document"
+  ],
+  "prescription document": [
+    "doctors prescription"
+  ],
+  "prescription": [
+    "doctors prescription"
+  ],
+  "correspondence": [
+    "letters with address",
+    "bills or receipt"
+  ],
+  "addressed correspondence": [
+    "letters with address",
+    "bills or receipt"
+  ],
+  "personal document": [
+    "letters with address",
+    "bills or receipt"
+  ],
+  "formal document": [
+    "letters with address",
+    "mortgage or investment report",
+    "bank statement"
+  ],
+  "educational record": [
+    "transcript"
+  ],
+  "academic record": [
+    "transcript"
+  ],
+  "academic document": [
+    "transcript"
+  ],
+  "printed financial card": [
+    "credit or debit card"
+  ],
+  "payment card": [
+    "credit or debit card"
+  ],
+  "bank card": [
+    "credit or debit card"
+  ],
+  "visual identity card": [
+    "business card"
+  ],
+  "contact card": [
+    "business card"
+  ],
+  "professional card": [
+    "business card"
+  ],
+  "card": [
+    "credit or debit card",
+    "business card"
+  ],
+  "print media": [
+    "local newspaper"
+  ],
+  "newspaper": [
+    "local newspaper"
+  ],
+  "news media": [
+    "local newspaper"
+  ],
+  "health indicator": [
+    "pregnancy test",
+    "pregnancy test box",
+    "condom box",
+    "condom with plastic bag",
+    "empty pill bottle"
+  ],
+  "health product": [
+    "pregnancy test",
+    "pregnancy test box",
+    "condom box",
+    "condom with plastic bag",
+    "empty pill bottle"
+  ],
+  "personal health product": [
+    "pregnancy test",
+    "pregnancy test box",
+    "condom box",
+    "condom with plastic bag",
+    "empty pill bottle"
+  ],
+  "contraceptive product": [
+    "condom box",
+    "condom with plastic bag"
+  ],
+  "contraceptive packaging": [
+    "condom box",
+    "condom with plastic bag"
+  ],
+  "medication container": [
+    "empty pill bottle"
+  ],
+  "pill bottle": [
+    "empty pill bottle"
+  ],
+  "medicine bottle": [
+    "empty pill bottle"
+  ],
+  "pregnancy indicator": [
+    "pregnancy test",
+    "pregnancy test box"
+  ],
+  "pregnancy product": [
+    "pregnancy test",
+    "pregnancy test box"
+  ],
+  "tattoo sleeve": [
+    "tattoo sleeve"
+  ],
+  "tattoo": [
+    "tattoo sleeve"
+  ],
+  "sleeve tattoo": [
+    "tattoo sleeve"
+  ]
+}

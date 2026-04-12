@@ -14,7 +14,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from common.vlm import SwiftVLMCaller, release_torch_runtime
+from common.vlm import SwiftVLMCaller
 from semantic.semantic_gdino_sam import SemanticController
 
 
@@ -126,7 +126,8 @@ def main() -> None:
                 runtime_stats_fh.write(json.dumps(runtime_stats) + '\n')
                 runtime_stats_fh.flush()
             if args.cuda_cleanup_interval > 0 and index % args.cuda_cleanup_interval == 0:
-                release_torch_runtime()
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
         progress.close()
     finally:
         if runtime_stats_fh is not None:
