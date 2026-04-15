@@ -74,3 +74,15 @@ Notes
 
 External Dependencies
 See THIRD_PARTY.md.
+
+Current Staged Workflow
+Run commands inside the `psi` conda environment.
+
+1) Stage 1 query-only direct category cues
+python semantic/run_stage1_semantic.py --query_dir /path/to/query_images --json_path /path/to/dev_pseudo_label_3w_coco.json --output_path /path/to/stage1_semantic.json --runtime_stats_jsonl /path/to/stage1_semantic.runtime.jsonl --llm_model Qwen/Qwen3-VL-4B-Instruct --device cuda --llm_max_new_tokens 160 --llm_decoding_mode deterministic --llm_max_pixels 448 --family_config config/family_category_direct_v1.json --query_prompt_path prompts/active/semantic_query_only.txt --null_policy ignore --save_raw_text
+
+2) Stage 2 Grounding DINO candidates with null hard drop and cue provenance
+python semantic/run_stage2_detection.py --stage1_path /path/to/stage1_semantic.json --config_path configs/grounding_dino_swin-t_finetune_8xb2_20e_viz.py --checkpoint_path /path/to/groundingdino_swint_ogc_mmdet-822d7e9d.pth --output_path /path/to/stage2_detection_gdino_ft.json
+
+3) Stage 3 Stage-1-category-shortlist reference match
+python semantic/run_stage3_calibration.py --json_path /path/to/dev_pseudo_label_3w_coco.json --stage1_path /path/to/stage1_semantic.json --stage2_path /path/to/stage2_detection_gdino_ft.json --output_dir /path/to/stage3_output --sam_checkpoint /path/to/sam_vit_h_4b8939.pth --llm_model Qwen/Qwen3-VL-4B-Instruct --device cuda --llm_decoding_mode deterministic --llm_max_pixels 448 --family_config config/family_category_direct_v1.json --calibration_mode reference_match --reference_source crop --support_dir /path/to/support_images --support_json /path/to/support_set.json --disable_sam --final_score_threshold 0.0 --classification_top_k 2 --skip_null_stage3

@@ -13,35 +13,37 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from common.vlm import SwiftVLMCaller
+from semantic.family_config import set_active_family_config
 from semantic.semantic_gdino_sam import (
     DetectionCandidate,
     ProposalCalibrator,
     SamSegmenter,
     SemanticCue,
-    build_category_shortlist,
     finalize_candidate_results,
 )
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description='Run Stage 3 calibration/finalization only.')
-    parser.add_argument('--json-path', required=True)
-    parser.add_argument('--stage1-path', required=True)
-    parser.add_argument('--stage2-path', required=True)
-    parser.add_argument('--output-dir', required=True)
-    parser.add_argument('--sam-checkpoint', required=True)
-    parser.add_argument('--llm-model', required=True)
+    parser.add_argument('--json_path', required=True)
+    parser.add_argument('--stage1_path', required=True)
+    parser.add_argument('--stage2_path', required=True)
+    parser.add_argument('--output_dir', required=True)
+    parser.add_argument('--sam_checkpoint', required=True)
+    parser.add_argument('--llm_model', required=True)
     parser.add_argument('--device', default='cuda')
-    parser.add_argument('--llm-decoding-mode', choices=['deterministic', 'stochastic'], default='deterministic')
-    parser.add_argument('--llm-seed', type=int, default=None)
-    parser.add_argument('--llm-max-pixels', type=int, default=448)
-    parser.add_argument('--calibration-mode', choices=['legacy', 'reference_match'], default='legacy')
-    parser.add_argument('--reference-source', choices=['crop', 'full_image'], default='crop')
-    parser.add_argument('--support-dir', default=None)
-    parser.add_argument('--support-json', default=None)
-    parser.add_argument('--disable-sam', action='store_true')
-    parser.add_argument('--final-score-threshold', type=float, default=0.30)
-    parser.add_argument('--classification-top-k', type=int, default=None)
+    parser.add_argument('--llm_decoding_mode', choices=['deterministic', 'stochastic'], default='deterministic')
+    parser.add_argument('--llm_seed', type=int, default=None)
+    parser.add_argument('--llm_max_pixels', type=int, default=448)
+    parser.add_argument('--family_config', default=None)
+    parser.add_argument('--calibration_mode', choices=['legacy', 'reference_match'], default='legacy')
+    parser.add_argument('--reference_source', choices=['crop', 'full_image'], default='crop')
+    parser.add_argument('--support_dir', default=None)
+    parser.add_argument('--support_json', default=None)
+    parser.add_argument('--disable_sam', action='store_true')
+    parser.add_argument('--final_score_threshold', type=float, default=0.30)
+    parser.add_argument('--classification_top_k', type=int, default=None)
+    parser.add_argument('--skip_null_stage3', action='store_true')
     return parser.parse_args()
 
 
@@ -76,8 +78,28 @@ def _normalize_category_name(text: str) -> str:
     return ' '.join((text or '').strip().replace('_', ' ').lower().split())
 
 
+def _resolve_stage1_category_shortlist(stage1_categories: list[str], category_names: list[str]) -> list[str]:
+    normalized_allowed = {
+        _normalize_category_name(category): category
+        for category in category_names
+    }
+    resolved: list[str] = []
+    seen: set[str] = set()
+    for category in stage1_categories:
+        normalized = _normalize_category_name(category)
+        if not normalized:
+            continue
+        matched = normalized_allowed.get(normalized)
+        if matched is None or matched in seen:
+            continue
+        resolved.append(matched)
+        seen.add(matched)
+    return resolved
+
+
 def main() -> None:
     args = parse_args()
+    set_active_family_config(args.family_config)
     output_dir = Path(args.output_dir).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -112,7 +134,6 @@ def main() -> None:
         client=shared_vlm,
     )
     segmenter = None if args.disable_sam else SamSegmenter(args.sam_checkpoint, device=args.device)
-
     outputs: list[dict[str, object]] = []
     progress = tqdm(stage2_records, desc='stage3 calibration', unit='image')
     for detection_record in progress:
@@ -120,14 +141,43 @@ def main() -> None:
         semantic_record = stage1_by_image[image_id]
         semantic = SemanticCue(
             family=str(semantic_record['semantic_family']),
+            categories=list(semantic_record.get('semantic_categories', [])),
             proposal_prompts=list(semantic_record['proposal_prompts']),
             null_likely=bool(semantic_record['null_likely']),
         )
-        category_shortlist = build_category_shortlist(semantic, category_names)
+        category_shortlist = _resolve_stage1_category_shortlist(semantic.categories, category_names)
+        if not category_shortlist and not semantic.null_likely:
+            category_shortlist = list(category_names)
         kept_candidates: list[dict[str, object]] = []
         calibration_logs: list[dict[str, object]] = []
 
         raw_candidates = list(detection_record.get('proposal_candidates', []))
+        if args.skip_null_stage3 and semantic.null_likely:
+            outputs.append({
+                'image_id': image_id,
+                'query_image_path': detection_record['query_image_path'],
+                'support_image_paths': detection_record.get('support_image_paths', []),
+                'controller_mode': detection_record['controller_mode'],
+                'semantic_family': semantic.family,
+                'semantic_categories': semantic.categories,
+                'proposal_prompts': semantic.proposal_prompts,
+                'null_likely': semantic.null_likely,
+                'null_policy': detection_record['null_policy'],
+                'proposal_candidates': raw_candidates,
+                'category_shortlist': [],
+                'calibration_logs': [],
+                'rerank_logs': [],
+                'results': [],
+            })
+            progress.set_postfix({
+                'image_id': image_id,
+                'selected': 0,
+            })
+            tqdm.write(
+                f"Stage3 image_id={image_id} family={semantic.family} candidates={len(raw_candidates)} "
+                "selected=0 skipped_null_stage3=1"
+            )
+            continue
         candidates_for_scoring = (
             raw_candidates[:args.classification_top_k]
             if args.classification_top_k
@@ -212,6 +262,7 @@ def main() -> None:
             'support_image_paths': detection_record.get('support_image_paths', []),
             'controller_mode': detection_record['controller_mode'],
             'semantic_family': semantic.family,
+            'semantic_categories': semantic.categories,
             'proposal_prompts': semantic.proposal_prompts,
             'null_likely': semantic.null_likely,
             'null_policy': detection_record['null_policy'],

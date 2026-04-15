@@ -24,8 +24,8 @@ from common.overlay_utils import (
     draw_xyxy_box,
     load_display_image,
 )
-from common.vlm import SwiftVLMCaller
-from common.vlm import release_torch_runtime
+from common.vlm import SwiftVLMCaller, release_torch_runtime
+from semantic.family_config import set_active_family_config
 from semantic.semantic_gdino_sam import (
     GroundingDinoLocalizer,
     ProposalCalibrator,
@@ -53,11 +53,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument('--llm-decoding-mode', choices=['deterministic', 'stochastic'], default='deterministic')
     parser.add_argument('--llm-seed', type=int, default=None)
     parser.add_argument('--llm-max-pixels', type=int, default=448)
+    parser.add_argument('--family-config', '--family_config', dest='family_config', default=None)
     parser.add_argument('--box-threshold', type=float, default=0.25)
     parser.add_argument('--text-threshold', type=float, default=0.25)
     parser.add_argument('--proposal-nms-iou', type=float, default=0.6)
     parser.add_argument('--max-candidates', type=int, default=5)
-    parser.add_argument('--final-score-threshold', type=float, default=0.30)
+    parser.add_argument('--final-score-threshold', type=float, default=0.40)
     parser.add_argument('--limit', type=int, default=None)
     parser.add_argument('--image-id', type=int, default=None)
     parser.add_argument('--date-tag', default=None)
@@ -65,10 +66,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument('--flat-output', action='store_true')
     parser.add_argument('--save-vis', action='store_true')
     parser.add_argument('--disable-sam', action='store_true')
-    parser.add_argument('--null-policy', choices=['strict', 'skip', 'ignore'], default='ignore')
+    parser.add_argument('--null-policy', choices=['strict', 'skip', 'ignore'], default='strict')
+    parser.add_argument('--use-hybrid-category-scores', action='store_true')
+    parser.add_argument('--hybrid-score-threshold', type=float, default=0.35)
+    parser.add_argument('--hybrid-margin', type=float, default=0.05)
+    parser.add_argument('--hybrid-iou-threshold', type=float, default=0.50)
+    parser.add_argument('--hybrid-exact-confidence-threshold', type=int, default=95)
     parser.add_argument('--calibration-mode', choices=['legacy', 'reference_match'], default='legacy')
     parser.add_argument('--reference-source', choices=['crop', 'full_image'], default='crop')
     parser.add_argument('--classification-top-k', type=int, default=None)
+    parser.add_argument('--disable-document-text', action='store_true')
     parser.add_argument('--runtime-stats-jsonl', default=None)
     parser.add_argument('--cuda-cleanup-interval', type=int, default=1)
     return parser.parse_args()
@@ -137,6 +144,7 @@ def build_submission_records(outputs: list[dict[str, Any]], category_name_to_id:
 
 def main() -> None:
     args = parse_args()
+    set_active_family_config(args.family_config)
     output_dir = resolve_output_dir(args.output_dir, args.flat_output, args.date_tag, args.run_id)
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -210,11 +218,18 @@ def main() -> None:
                 final_score_threshold=args.final_score_threshold,
                 use_sam=not args.disable_sam,
                 null_policy=args.null_policy,
+                use_hybrid_category_scores=args.use_hybrid_category_scores,
+                hybrid_score_threshold=args.hybrid_score_threshold,
+                hybrid_margin=args.hybrid_margin,
+                hybrid_iou_threshold=args.hybrid_iou_threshold,
+                hybrid_exact_confidence_threshold=args.hybrid_exact_confidence_threshold,
+                use_document_text=not args.disable_document_text,
                 classification_top_k=args.classification_top_k,
             )
             if torch.cuda.is_available() and str(args.device).startswith('cuda'):
                 torch.cuda.synchronize(args.device)
             elapsed_sec = time.perf_counter() - image_start
+            outputs.append(record)
             runtime_stats: dict[str, Any] = {
                 'image_index': index,
                 'image_id': image_info['id'],
@@ -229,7 +244,10 @@ def main() -> None:
                 runtime_stats['gpu_memory_reserved_mb'] = round(torch.cuda.memory_reserved(args.device) / (1024 ** 2), 1)
                 runtime_stats['gpu_max_memory_allocated_mb'] = round(torch.cuda.max_memory_allocated(args.device) / (1024 ** 2), 1)
                 torch.cuda.reset_peak_memory_stats(args.device)
-            outputs.append(record)
+            top_hybrid = record.get('category_hybrid_signals', [])
+            hybrid_text = ''
+            if top_hybrid:
+                hybrid_text = f" hybrid_top={top_hybrid[0]['category']}:{top_hybrid[0]['score']:.2f}"
             progress.set_postfix({
                 'image_id': image_info['id'],
                 'family': record['semantic_family'] or '-',
@@ -239,7 +257,7 @@ def main() -> None:
             message = (
                 f"Processed image_id={image_info['id']} family={record['semantic_family']} "
                 f"null={record['null_likely']} proposals={len(record['proposal_candidates'])} "
-                f"selected={len(record['results'])} elapsed_sec={elapsed_sec:.1f}"
+                f"selected={len(record['results'])} elapsed_sec={elapsed_sec:.1f}{hybrid_text}"
             )
             if 'gpu_memory_reserved_mb' in runtime_stats:
                 message += (
