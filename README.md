@@ -1,4 +1,4 @@
-semantic_vlm_privacy
+# semantic_vlm_privacy
 
 Standalone code snapshot for the current privacy challenge pipeline.
 
