@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+import gc
 from dataclasses import dataclass
-from pathlib import Path
-from typing import ClassVar, Optional, Sequence
+from typing import Optional, Sequence
 
 import torch
 
@@ -49,17 +49,13 @@ If uncertain but possible categories exist, include them with low confidence. If
 """.strip()
 
 
-def _ensure_transformers_torch_pytree_compat() -> None:
-    """Backfill the newer pytree registration API expected by transformers on torch 2.1."""
-    import torch.utils._pytree as pytree
-
-    if hasattr(pytree, "register_pytree_node"):
+def release_torch_runtime() -> None:
+    gc.collect()
+    if not torch.cuda.is_available():
         return
-
-    def register_pytree_node(typ, flatten_fn, unflatten_fn, *args, **kwargs):
-        return pytree._register_pytree_node(typ, flatten_fn, unflatten_fn)
-
-    pytree.register_pytree_node = register_pytree_node
+    torch.cuda.empty_cache()
+    if hasattr(torch.cuda, "ipc_collect"):
+        torch.cuda.ipc_collect()
 
 
 @dataclass
@@ -99,50 +95,37 @@ def get_decoding_config(mode: str = "deterministic", seed: Optional[int] = None,
 
 @dataclass
 class SwiftVLMCaller:
-    _ENGINE_CACHE: ClassVar[dict[tuple[str, int, str | None], tuple[object, object]]] = {}
-
     model_path: str
     max_new_tokens: int = 256
     decoding_mode: str = "deterministic"
     seed: Optional[int] = None
     max_pixels: int = 448
+    device: Optional[str] = None
     lora_path: Optional[str] = None
 
     def __post_init__(self) -> None:
-        _ensure_transformers_torch_pytree_compat()
-        try:
-            from swift.llm import PtEngine, RequestConfig, safe_snapshot_download, get_model_tokenizer, get_template
-            from swift.tuners import Swift
-        except ModuleNotFoundError as exc:
-            raise ModuleNotFoundError(
-                "MS-SWIFT is not installed. Install it first or use --llm-backend hf."
-            ) from exc
-
         config = get_decoding_config(
             self.decoding_mode,
             seed=self.seed,
             max_new_tokens=self.max_new_tokens,
         )
+        self._use_legacy_swift = False
 
-        cache_key = (str(Path(self.model_path).resolve()), int(self.max_pixels), self.lora_path)
-        cached = self._ENGINE_CACHE.get(cache_key)
-        if cached is None:
-            # Always use local Hugging Face-format weights through swift.
-            model, tokenizer = get_model_tokenizer(self.model_path, use_hf=True, max_pixels=self.max_pixels)
-            if self.lora_path:
-                lora_checkpoint = safe_snapshot_download(self.lora_path)
-                model = Swift.from_pretrained(model, lora_checkpoint)
-                model = model.merge_and_unload()
-            model.eval()
-            template = get_template(model.model_meta.template, tokenizer, default_system=None)
-            engine = PtEngine.from_model_template(model, template, max_batch_size=1)
-            infer_request_cls = __import__("swift.llm", fromlist=["InferRequest"]).InferRequest
-            cached = (engine, infer_request_cls)
-            self._ENGINE_CACHE[cache_key] = cached
-        self.engine, self._InferRequest = cached
+        try:
+            from swift.llm import PtEngine, RequestConfig, safe_snapshot_download, get_model_tokenizer, get_template
+            from swift.tuners import Swift
+            self._use_legacy_swift = True
+        except ModuleNotFoundError:
+            try:
+                from swift.infer_engine import InferRequest, RequestConfig, TransformersEngine
+                from swift.utils import safe_snapshot_download
+            except ModuleNotFoundError as exc:
+                raise ModuleNotFoundError(
+                    "MS-SWIFT is not installed. Install it first or use --llm-backend hf."
+                ) from exc
 
         if config.temperature == 0.0:
-            self.request_config = RequestConfig(
+            request_config = RequestConfig(
                 max_tokens=config.max_new_tokens,
                 temperature=0.0,
                 top_k=1,
@@ -161,7 +144,39 @@ class SwiftVLMCaller:
                 kwargs["repetition_penalty"] = config.presence_penalty
             if config.seed is not None:
                 kwargs["seed"] = config.seed
-            self.request_config = RequestConfig(**kwargs)
+            request_config = RequestConfig(**kwargs)
+
+        self.request_config = request_config
+
+        if self._use_legacy_swift:
+            model, tokenizer = get_model_tokenizer(
+                self.model_path,
+                use_hf=True,
+                max_pixels=self.max_pixels,
+                device_map=_resolve_device_map(self.device),
+            )
+            if self.lora_path:
+                lora_checkpoint = safe_snapshot_download(self.lora_path)
+                model = Swift.from_pretrained(model, lora_checkpoint)
+                model = model.merge_and_unload()
+            model.eval()
+
+            template = get_template(model.model_meta.template, tokenizer, default_system=None)
+            self.engine = PtEngine.from_model_template(model, template, max_batch_size=1)
+            self._InferRequest = __import__("swift.llm", fromlist=["InferRequest"]).InferRequest
+            return
+
+        adapters = None
+        if self.lora_path:
+            adapters = [safe_snapshot_download(self.lora_path, use_hf=True)]
+        self.engine = TransformersEngine(
+            self.model_path,
+            adapters=adapters,
+            max_batch_size=1,
+            use_hf=True,
+            max_pixels=self.max_pixels,
+        )
+        self._InferRequest = InferRequest
 
     def generate(self, image_path: str, instruction: Optional[str] = None) -> str:
         return self.generate_images([image_path], instruction=instruction)
@@ -175,5 +190,26 @@ class SwiftVLMCaller:
             messages=[{"role": "user", "content": f"{image_tokens}{prompt}"}],
             images=[str(path) for path in image_paths],
         )
-        resp_list = self.engine.infer([infer_request], self.request_config)
-        return resp_list[0].choices[0].message.content.strip()
+        with torch.inference_mode():
+            resp_list = self.engine.infer([infer_request], self.request_config)
+        text = resp_list[0].choices[0].message.content.strip()
+        del resp_list
+        del infer_request
+        release_torch_runtime()
+        return text
+
+
+def _resolve_device_map(device: Optional[str]) -> Optional[object]:
+    if not device:
+        return None
+    normalized = device.strip().lower()
+    if normalized == "cpu":
+        return "cpu"
+    if normalized == "cuda":
+        return {"": 0}
+    if normalized.startswith("cuda:"):
+        try:
+            return {"": int(normalized.split(":", 1)[1])}
+        except ValueError:
+            return None
+    return None

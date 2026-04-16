@@ -11,18 +11,6 @@ import cv2
 import mmcv
 import numpy as np
 import torch
-
-if hasattr(torch.utils, "_pytree"):
-    pytree = torch.utils._pytree
-    if not hasattr(pytree, "register_pytree_node") and hasattr(pytree, "_register_pytree_node"):
-        def _compat_register_pytree_node(*args, **kwargs):
-            kwargs.pop("serialized_type_name", None)
-            kwargs.pop("to_dumpable_context", None)
-            kwargs.pop("from_dumpable_context", None)
-            return pytree._register_pytree_node(*args, **kwargs)
-
-        pytree.register_pytree_node = _compat_register_pytree_node
-
 from torchvision import ops
 
 from common.vlm import DEFAULT_INSTRUCTION, SwiftVLMCaller

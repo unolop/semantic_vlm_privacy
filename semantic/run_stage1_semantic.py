@@ -6,6 +6,7 @@ import json
 import sys
 import time
 from pathlib import Path
+from pprint import pformat
 
 import torch
 from tqdm.auto import tqdm
@@ -14,26 +15,31 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from common.vlm import SwiftVLMCaller
+from common.vlm import SwiftVLMCaller, release_torch_runtime
+from common.vlm import _resolve_device_map
+from semantic.family_config import get_active_family_config_path, get_family_names, set_active_family_config
 from semantic.semantic_gdino_sam import SemanticController
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description='Run Stage 1 query-only semantic inference.')
-    parser.add_argument('--query-dir', required=True)
-    parser.add_argument('--json-path', required=True)
-    parser.add_argument('--output-path', required=True)
-    parser.add_argument('--llm-model', required=True)
+    parser.add_argument('--query_dir', required=True)
+    parser.add_argument('--json_path', required=True)
+    parser.add_argument('--output_path', required=True)
+    parser.add_argument('--llm_model', required=True)
     parser.add_argument('--device', default='cuda')
-    parser.add_argument('--llm-max-new-tokens', type=int, default=256)
-    parser.add_argument('--llm-decoding-mode', choices=['deterministic', 'stochastic'], default='deterministic')
-    parser.add_argument('--llm-seed', type=int, default=None)
-    parser.add_argument('--llm-max-pixels', type=int, default=448)
-    parser.add_argument('--null-policy', choices=['strict', 'skip', 'ignore'], default='ignore')
+    parser.add_argument('--llm_max_new_tokens', type=int, default=128)
+    parser.add_argument('--llm_decoding_mode', choices=['deterministic', 'stochastic'], default='deterministic')
+    parser.add_argument('--llm_seed', type=int, default=None)
+    parser.add_argument('--llm_max_pixels', type=int, default=448)
+    parser.add_argument('--family_config', '--family-config', dest='family_config', default=None)
+    parser.add_argument('--query_prompt_path', default=None)
+    parser.add_argument('--null_policy', choices=['strict', 'skip', 'ignore'], default='ignore')
     parser.add_argument('--limit', type=int, default=None)
-    parser.add_argument('--image-id', type=int, default=None)
-    parser.add_argument('--runtime-stats-jsonl', default=None)
-    parser.add_argument('--cuda-cleanup-interval', type=int, default=1)
+    parser.add_argument('--image_id', type=int, default=None)
+    parser.add_argument('--runtime_stats_jsonl', default=None)
+    parser.add_argument('--save_raw_text', action='store_true')
+    parser.add_argument('--cuda_cleanup_interval', type=int, default=0)
     return parser.parse_args()
 
 
@@ -41,6 +47,10 @@ def main() -> None:
     args = parse_args()
     output_path = Path(args.output_path).resolve()
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    set_active_family_config(args.family_config)
+    query_prompt_text = None
+    if args.query_prompt_path:
+        query_prompt_text = Path(args.query_prompt_path).read_text().strip()
 
     dataset = json.loads(Path(args.json_path).read_text())
     images = dataset['images']
@@ -63,8 +73,45 @@ def main() -> None:
         decoding_mode=args.llm_decoding_mode,
         seed=args.llm_seed,
         max_pixels=args.llm_max_pixels,
+        query_only_instruction=query_prompt_text,
         client=shared_vlm,
     )
+
+    request_config = getattr(shared_vlm, 'request_config', None)
+    runtime_config = {
+        'parsed_args': {
+            'llm_model': args.llm_model,
+            'device': args.device,
+            'llm_max_new_tokens': args.llm_max_new_tokens,
+            'llm_decoding_mode': args.llm_decoding_mode,
+            'llm_seed': args.llm_seed,
+            'llm_max_pixels': args.llm_max_pixels,
+            'family_config': get_active_family_config_path(),
+        },
+        'vlm_caller': {
+            'model_path': shared_vlm.model_path,
+            'max_new_tokens': shared_vlm.max_new_tokens,
+            'decoding_mode': shared_vlm.decoding_mode,
+            'seed': shared_vlm.seed,
+            'max_pixels': shared_vlm.max_pixels,
+            'device': shared_vlm.device,
+            'resolved_device_map': _resolve_device_map(shared_vlm.device),
+        },
+        'family_spec': {
+            'config_path': get_active_family_config_path(),
+            'family_names': get_family_names(),
+        },
+        'request_config': {
+            'max_tokens': getattr(request_config, 'max_tokens', None),
+            'temperature': getattr(request_config, 'temperature', None),
+            'top_k': getattr(request_config, 'top_k', None),
+            'top_p': getattr(request_config, 'top_p', None),
+            'seed': getattr(request_config, 'seed', None),
+            'repetition_penalty': getattr(request_config, 'repetition_penalty', None),
+        },
+    }
+    print('[stage1] runtime_config')
+    print(pformat(runtime_config, sort_dicts=False))
 
     outputs: list[dict[str, object]] = []
     runtime_stats_path = Path(args.runtime_stats_jsonl).resolve() if args.runtime_stats_jsonl else None
@@ -74,7 +121,11 @@ def main() -> None:
         for index, image_info in enumerate(progress, start=1):
             query_image_path = str((Path(args.query_dir) / image_info['file_name']).resolve())
             image_start = time.perf_counter()
-            semantic = controller.infer_query_only(query_image_path)
+            if args.save_raw_text:
+                semantic, raw_text = controller.infer_query_only_with_raw(query_image_path)
+            else:
+                semantic = controller.infer_query_only(query_image_path)
+                raw_text = None
             if torch.cuda.is_available() and str(args.device).startswith('cuda'):
                 torch.cuda.synchronize(args.device)
             elapsed_sec = time.perf_counter() - image_start
@@ -85,9 +136,12 @@ def main() -> None:
                 'controller_mode': 'query_only',
                 'null_policy': args.null_policy,
                 'semantic_family': semantic.family,
+                'semantic_categories': semantic.categories,
                 'proposal_prompts': semantic.proposal_prompts,
                 'null_likely': semantic.null_likely,
             }
+            if raw_text is not None:
+                record['semantic_raw_text'] = raw_text
             runtime_stats = {
                 'image_index': index,
                 'image_id': image_info['id'],
@@ -95,9 +149,13 @@ def main() -> None:
                 'controller_mode': 'query_only',
                 'support_image_count': 0,
                 'semantic_family': semantic.family,
+                'semantic_categories': semantic.categories,
                 'null_likely': semantic.null_likely,
                 'prompt_count': len(semantic.proposal_prompts),
             }
+            if raw_text is not None:
+                runtime_stats['raw_text_char_len'] = len(raw_text)
+                runtime_stats['raw_text_word_len'] = len(raw_text.split())
             if torch.cuda.is_available() and str(args.device).startswith('cuda'):
                 runtime_stats['gpu_memory_allocated_mb'] = round(torch.cuda.memory_allocated(args.device) / (1024 ** 2), 1)
                 runtime_stats['gpu_memory_reserved_mb'] = round(torch.cuda.memory_reserved(args.device) / (1024 ** 2), 1)
@@ -106,12 +164,12 @@ def main() -> None:
             outputs.append(record)
             progress.set_postfix({
                 'image_id': image_info['id'],
-                'family': semantic.family or '-',
+                'categories': ','.join(semantic.categories[:2]) or semantic.family or '-',
                 'null': semantic.null_likely,
                 'sec': f'{elapsed_sec:.1f}',
             })
             message = (
-                f"Stage1 image_id={image_info['id']} family={semantic.family} "
+                f"Stage1 image_id={image_info['id']} categories={semantic.categories or [semantic.family]} "
                 f"null={semantic.null_likely} prompts={len(semantic.proposal_prompts)} "
                 f"elapsed_sec={elapsed_sec:.1f} mode=query_only support_images=0"
             )

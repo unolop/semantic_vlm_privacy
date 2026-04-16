@@ -15,17 +15,20 @@ if str(PROJECT_ROOT) not in sys.path:
 from semantic.semantic_gdino_sam import GroundingDinoLocalizer, detect_free_text, should_run_detection
 
 
+INVALID_STAGE2_PROMPTS = {'null', 'none', 'empty', 'n/a'}
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description='Run Stage 2 detection only.')
-    parser.add_argument('--stage1-path', required=True)
-    parser.add_argument('--output-path', required=True)
-    parser.add_argument('--config-path', required=True)
-    parser.add_argument('--checkpoint-path', required=True)
+    parser.add_argument('--stage1_path', required=True)
+    parser.add_argument('--output_path', required=True)
+    parser.add_argument('--config_path', required=True)
+    parser.add_argument('--checkpoint_path', required=True)
     parser.add_argument('--device', default='cuda')
-    parser.add_argument('--box-threshold', type=float, default=0.25)
-    parser.add_argument('--text-threshold', type=float, default=0.25)
-    parser.add_argument('--proposal-nms-iou', type=float, default=0.6)
-    parser.add_argument('--max-candidates', type=int, default=5)
+    parser.add_argument('--box_threshold', type=float, default=0.25)
+    parser.add_argument('--text_threshold', type=float, default=0.25)
+    parser.add_argument('--proposal_nms_iou', type=float, default=0.6)
+    parser.add_argument('--max_candidates', type=int, default=5)
     return parser.parse_args()
 
 
@@ -56,10 +59,23 @@ def main() -> None:
     progress = tqdm(records, desc='stage2 detection', unit='image')
     for record in progress:
         run_detection = should_run_detection(bool(record['null_likely']), str(record['null_policy']))
+        skip_reason = None
+        if bool(record['null_likely']):
+            run_detection = False
+            skip_reason = 'stage1_null'
         proposal_candidates: list[dict[str, object]] = []
-        if run_detection and record['proposal_prompts']:
+        prompt_list = []
+        if run_detection:
+            prompt_list = [
+                str(prompt).strip()
+                for prompt in record.get('proposal_prompts', [])
+                if str(prompt).strip() and str(prompt).strip().lower() not in INVALID_STAGE2_PROMPTS
+            ]
+            if not prompt_list:
+                skip_reason = 'empty_prompt_list'
+        if run_detection and prompt_list:
             collected: list[dict[str, object]] = []
-            for prompt in record['proposal_prompts']:
+            for prompt in prompt_list:
                 detections = detect_free_text(
                     localizer=localizer,
                     image_path=str(record['query_image_path']),
@@ -70,6 +86,8 @@ def main() -> None:
                 for detection in detections:
                     collected.append({
                         'score': float(detection.score),
+                        'label_text': detection.label_text,
+                        'source_prompt': str(prompt),
                         'bbox_xyxy': list(detection.xyxy),
                     })
             proposal_candidates = _nms_rank(
@@ -85,8 +103,10 @@ def main() -> None:
             'controller_mode': record['controller_mode'],
             'null_policy': record['null_policy'],
             'semantic_family': record['semantic_family'],
-            'proposal_prompts': record['proposal_prompts'],
+            'semantic_categories': record.get('semantic_categories', []),
+            'proposal_prompts': prompt_list,
             'null_likely': record['null_likely'],
+            'stage2_skip_reason': skip_reason,
             'proposal_candidates': proposal_candidates,
         })
         progress.set_postfix({
