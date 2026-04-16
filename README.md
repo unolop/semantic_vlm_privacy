@@ -85,4 +85,34 @@ python semantic/run_stage1_semantic.py --query_dir /path/to/query_images --json_
 python semantic/run_stage2_detection.py --stage1_path /path/to/stage1_semantic.json --config_path configs/grounding_dino_swin-t_finetune_8xb2_20e_viz.py --checkpoint_path /path/to/groundingdino_swint_ogc_mmdet-822d7e9d.pth --output_path /path/to/stage2_detection_gdino_ft.json
 
 3) Stage 3 Stage-1-category-shortlist reference match
-python semantic/run_stage3_calibration.py --json_path /path/to/dev_pseudo_label_3w_coco.json --stage1_path /path/to/stage1_semantic.json --stage2_path /path/to/stage2_detection_gdino_ft.json --output_dir /path/to/stage3_output --sam_checkpoint /path/to/sam_vit_h_4b8939.pth --llm_model Qwen/Qwen3-VL-4B-Instruct --device cuda --llm_decoding_mode deterministic --llm_max_pixels 448 --family_config config/family_category_direct_v1.json --calibration_mode reference_match --reference_source crop --support_dir /path/to/support_images --support_json /path/to/support_set.json --disable_sam --final_score_threshold 0.0 --classification_top_k 2 --skip_null_stage3
+python semantic/run_stage3_calibration.py --json_path /path/to/dev_pseudo_label_3w_coco.json --stage1_path /path/to/stage1_semantic.json --stage2_path /path/to/stage2_detection_gdino_ft.json --output_dir /path/to/stage3_output --sam_checkpoint /path/to/sam_vit_h_4b8939.pth --llm_model Qwen/Qwen3-VL-4B-Instruct --device cuda --llm_decoding_mode deterministic --llm_max_pixels 448 --family_config config/family_category_direct_v1.json --calibration_mode reference_match --reference_source crop --support_dir /path/to/support_images --support_json /path/to/support_set.json --disable_sam --proposal_score_threshold 0.0 --classification_top_k 2 --skip_null_stage3
+
+권장 실행 경로: Route4 Best Protocol
+- 전용 엔트리포인트:
+  - `python semantic/run_route4_best_protocol.py --output_root /path/to/output_root`
+- 이 스크립트는 현재 저장소에서 권장하는 Route4 파이프라인을 Stage 1 -> Stage 2 -> Stage 3 순서로 한 번에 실행한다.
+- 기본 동작:
+  - Stage 1: 이미지 단위로 하나의 route와 소수의 category 후보를 정리한다.
+  - Stage 2: Stage-1 cue를 이용해 Grounding DINO proposal을 만든다.
+  - Stage 3: support reference 비교로 category를 확정하고 최종 bbox를 정리한다.
+- 문서 계열 처리 원칙:
+  - 문서 후보는 refine를 한 번 더 수행한다.
+  - refine 결과가 Stage-1 shortlist 밖으로 벗어나면 shortlist 내부 category만 유지한다.
+  - 문서 route에서는 이미지별로 최종 문서 후보 1개만 남긴다.
+- 설계 의도:
+  - Stage 1은 넓은 의미의 semantic prior를 제공한다.
+  - Stage 2는 localization을 담당한다.
+  - Stage 3는 support 기반 category 정렬과 후처리를 담당한다.
+  - 즉, route/category prior, localization, exact-category verification을 분리한 구조다.
+- 출력:
+  - `output_root/stage1_semantic.json`
+  - `output_root/stage2_detection_gdino_ft.json`
+  - `output_root/stage3_best_protocol/semantic_pipeline_results.json`
+  - `output_root/stage3_best_protocol/query_submission.json`
+  - `output_root/protocol_manifest.json`
+- 이미 만들어둔 Stage-1/Stage-2 결과를 그대로 재사용하고 싶으면 `--stage1_path`, `--stage2_path`를 직접 넘기면 된다.
+
+Score terminology:
+- `proposal_score`: Grounding DINO text-conditioned proposal score from Stage 2. Use this for proposal thresholding/ranking.
+- `query_submission[].score`: submission-format alias of `proposal_score`.
+- `candidate_score`, `detector_score`, and `final_score`: deprecated compatibility aliases. They currently equal `proposal_score` and should not be interpreted as semantic/category confidence.
