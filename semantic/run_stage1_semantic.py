@@ -18,7 +18,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from common.vlm import SwiftVLMCaller, release_torch_runtime
 from common.vlm import _resolve_device_map
 from semantic.family_config import get_active_family_config_path, get_family_names, set_active_family_config
-from semantic.semantic_gdino_sam import SemanticController
+from semantic.semantic_gdino_sam import SemanticController, DOCUMENT_TEXT_PROMPT, _parse_semantic_cue, _extract_tag
 
 
 def parse_args() -> argparse.Namespace:
@@ -40,6 +40,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument('--runtime_stats_jsonl', default=None)
     parser.add_argument('--save_raw_text', action='store_true')
     parser.add_argument('--cuda_cleanup_interval', type=int, default=0)
+    parser.add_argument('--support_dir', default=None)
+    parser.add_argument('--support_json', default=None)
+    parser.add_argument('--enable_ocr_enrichment', action='store_true',
+                        help='Run OCR on each image before Stage 1 VLM call and append extracted text to the prompt.')
     return parser.parse_args()
 
 
@@ -51,6 +55,19 @@ def main() -> None:
     query_prompt_text = None
     if args.query_prompt_path:
         query_prompt_text = Path(args.query_prompt_path).read_text().strip()
+
+    # Build category → support image paths lookup
+    support_paths_by_category: dict[str, list[str]] = {}
+    if args.support_json and args.support_dir:
+        support_data = json.loads(Path(args.support_json).read_text())
+        support_cat_names = {c['id']: c['name'] for c in support_data['categories']}
+        support_img_files = {img['id']: img['file_name'] for img in support_data['images']}
+        for ann in support_data['annotations']:
+            cat = support_cat_names[ann['category_id']]
+            fpath = str((Path(args.support_dir) / support_img_files[ann['image_id']]).resolve())
+            support_paths_by_category.setdefault(cat, [])
+            if fpath not in support_paths_by_category[cat]:
+                support_paths_by_category[cat].append(fpath)
 
     dataset = json.loads(Path(args.json_path).read_text())
     images = dataset['images']
@@ -121,7 +138,29 @@ def main() -> None:
         for index, image_info in enumerate(progress, start=1):
             query_image_path = str((Path(args.query_dir) / image_info['file_name']).resolve())
             image_start = time.perf_counter()
-            if args.save_raw_text:
+            if args.enable_ocr_enrichment:
+                # Run OCR pass first; append any extracted text to the Stage 1 prompt
+                ocr_raw = shared_vlm.generate(query_image_path, instruction=DOCUMENT_TEXT_PROMPT)
+                ocr_text    = _extract_tag(ocr_raw, 'text').strip()
+                ocr_hint    = _extract_tag(ocr_raw, 'document_hint').strip()
+                has_ocr = ocr_text and ocr_text.lower() not in ('none', '')
+                if has_ocr:
+                    ocr_context = (
+                        f'\n\nOCR hint from image (use only if relevant to category selection):\n'
+                        f'Type hint: {ocr_hint}\n'
+                        f'Visible text: {ocr_text}'
+                    )
+                    enriched_instruction = controller.query_only_instruction + ocr_context
+                    stage1_raw = shared_vlm.generate(query_image_path, instruction=enriched_instruction)
+                    semantic = _parse_semantic_cue(stage1_raw)
+                    raw_text = stage1_raw if args.save_raw_text else None
+                else:
+                    if args.save_raw_text:
+                        semantic, raw_text = controller.infer_query_only_with_raw(query_image_path)
+                    else:
+                        semantic = controller.infer_query_only(query_image_path)
+                        raw_text = None
+            elif args.save_raw_text:
                 semantic, raw_text = controller.infer_query_only_with_raw(query_image_path)
             else:
                 semantic = controller.infer_query_only(query_image_path)
@@ -129,10 +168,20 @@ def main() -> None:
             if torch.cuda.is_available() and str(args.device).startswith('cuda'):
                 torch.cuda.synchronize(args.device)
             elapsed_sec = time.perf_counter() - image_start
+            # Resolve support images for predicted categories
+            support_image_paths: list[str] = []
+            if support_paths_by_category:
+                seen: set[str] = set()
+                for cat in semantic.categories:
+                    for path in support_paths_by_category.get(cat, []):
+                        if path not in seen:
+                            support_image_paths.append(path)
+                            seen.add(path)
+
             record = {
                 'image_id': image_info['id'],
                 'query_image_path': query_image_path,
-                'support_image_paths': [],
+                'support_image_paths': support_image_paths,
                 'controller_mode': 'query_only',
                 'null_policy': args.null_policy,
                 'semantic_family': semantic.family,

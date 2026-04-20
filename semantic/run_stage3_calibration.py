@@ -18,6 +18,7 @@ from semantic.semantic_gdino_sam import (
     DetectionCandidate,
     ProposalCalibrator,
     SamSegmenter,
+    SemanticController,
     SemanticCue,
     _extract_tag,
     _save_candidate_crop,
@@ -70,7 +71,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument('--verbose_decisions', action='store_true')
     parser.add_argument('--decision_log_jsonl', default=None)
     parser.add_argument('--save_calibration_raw_text', action='store_true')
+    parser.add_argument('--enable_ocr_enrichment', action='store_true',
+                        help='Run OCR text enrichment on document-category images before calibration.')
     parser.add_argument('--enable_document_refine', action='store_true')
+    parser.add_argument('--document_refine_override_shortlist', action='store_true',
+                        help='Allow document_refine to accept any valid GT document category, '
+                             'overriding Stage 1 shortlist when evidence is present.')
+    parser.add_argument('--document_category_threshold', type=float, default=None,
+                        help='Proposal score threshold for document categories. '
+                             'If set, overrides --proposal_score_threshold for images '
+                             'whose Stage 1 shortlist contains at least one document category.')
     parser.add_argument('--document_refine_prompt_path', default=str(DOCUMENT_REFINE_DEFAULT_PROMPT))
     parser.add_argument(
         '--enable_document_prompt_match_fallback',
@@ -291,6 +301,16 @@ def main() -> None:
         seed=args.llm_seed,
         max_pixels=args.llm_max_pixels,
     )
+    ocr_controller = None
+    if args.enable_ocr_enrichment:
+        ocr_controller = SemanticController(
+            model_path=args.llm_model,
+            max_new_tokens=128,
+            decoding_mode=args.llm_decoding_mode,
+            seed=args.llm_seed,
+            max_pixels=args.llm_max_pixels,
+            client=shared_vlm,
+        )
     if args.calibration_mode == 'reference_match' and (not args.support_json or not args.support_dir):
         raise ValueError('reference_match mode requires --support-json and --support-dir')
     calibrator = ProposalCalibrator(
@@ -323,6 +343,9 @@ def main() -> None:
                 proposal_prompts=list(semantic_record['proposal_prompts']),
                 null_likely=bool(semantic_record['null_likely']),
             )
+            if ocr_controller is not None:
+                query_image_path_for_ocr = str(detection_record['query_image_path'])
+                semantic = ocr_controller.enrich_with_document_text(query_image_path_for_ocr, semantic)
             category_shortlist = _resolve_stage1_category_shortlist(semantic.categories, category_names)
             if not category_shortlist and not semantic.null_likely:
                 category_shortlist = list(category_names)
@@ -374,6 +397,12 @@ def main() -> None:
                 if args.classification_top_k
                 else raw_candidates
             )
+            effective_threshold = args.proposal_score_threshold
+            if (
+                args.document_category_threshold is not None
+                and any(_is_document_category(c) for c in category_shortlist)
+            ):
+                effective_threshold = args.document_category_threshold
             for candidate_index, candidate_record in enumerate(candidates_for_scoring):
                 candidate_prompt = _candidate_prompt(candidate_record)
                 proposal_score = float(candidate_record['score'])
@@ -403,7 +432,11 @@ def main() -> None:
                 pre_refine_category = None
 
                 if (
-                    _is_document_route(semantic.route_type)
+                    (
+                        _is_document_route(semantic.route_type)
+                        or bool(semantic.text_hint_summary)
+                        or any(_is_document_category(c) for c in semantic.categories)
+                    )
                     and args.enable_document_refine
                     and document_refine_prompt
                 ):
@@ -420,6 +453,10 @@ def main() -> None:
                     document_refine_raw_text = str(document_refine['raw_text'])
                     normalized_shortlist = {
                         _normalize_category_name(name): name for name in category_shortlist
+                    }
+                    normalized_all_doc_cats = {
+                        _normalize_category_name(name): name for name in category_names
+                        if _normalize_category_name(name) in {_normalize_category_name(c) for c in DOCUMENT_CATEGORIES}
                     }
                     normalized_refine = _normalize_category_name(document_refine_category or '')
                     if category_shortlist:
@@ -439,6 +476,15 @@ def main() -> None:
                     ):
                         matched_category = normalized_shortlist[normalized_refine]
                         category_fallback_reason = None
+                    elif (
+                        args.document_refine_override_shortlist
+                        and document_refine_category
+                        and document_refine_evidence
+                        and normalized_refine in normalized_all_doc_cats
+                    ):
+                        matched_category = normalized_all_doc_cats[normalized_refine]
+                        category_fallback_reason = None
+                        document_refine_override = True
                     elif prompt_matched_category is not None:
                         matched_category = prompt_matched_category
                         category_fallback_reason = f'document_{prompt_fallback_reason}'
@@ -473,11 +519,11 @@ def main() -> None:
                         )
                     pre_refine_category = matched_category
                 if stage3_branch == 'document_refine' or args.calibration_mode == 'reference_match':
-                    accepted = bool(matched_category and proposal_score >= args.proposal_score_threshold)
+                    accepted = bool(matched_category and proposal_score >= effective_threshold)
                 else:
                     accepted = bool(
                         matched_category
-                        and proposal_score >= args.proposal_score_threshold
+                        and proposal_score >= effective_threshold
                         and (decision.decision is not False)
                         and (decision.object_valid is not False)
                         and (decision.family_match is not False)
@@ -486,7 +532,7 @@ def main() -> None:
                 reject_reasons = [] if accepted else _reject_reasons(
                     matched_category=matched_category,
                     proposal_score=proposal_score,
-                    proposal_score_threshold=args.proposal_score_threshold,
+                    proposal_score_threshold=effective_threshold,
                     decision=decision,
                     reference_match_mode=(stage3_branch == 'document_refine' or args.calibration_mode == 'reference_match'),
                 )
@@ -516,7 +562,7 @@ def main() -> None:
                     'category_fallback_reason': category_fallback_reason,
                     'accepted': accepted,
                     'reject_reasons': reject_reasons,
-                    'proposal_score_threshold': args.proposal_score_threshold,
+                    'proposal_score_threshold': effective_threshold,
                     # Backward-compatible alias. This is not a semantic confidence.
                     'final_score': proposal_score,
                 }
