@@ -80,6 +80,7 @@ DESCRIPTIVE_SPLIT_PATTERNS = (
 class SemanticCue:
     raw_text: str = ''
     family: str = ''
+    route_type: str = ''
     categories: list[str] = field(default_factory=list)
     summary: str = ''
     proposal_prompts: list[str] = field(default_factory=list)

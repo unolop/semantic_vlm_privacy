@@ -1,0 +1,15 @@
+You are given one query image.
+Choose only the broadest likely private-object family and provide only coarse detector prompts.
+
+Return only the following XML-like fields:
+<family>one mid-level family chosen from: transactional paper, statement or report document, addressed correspondence, educational record, medical document, print media, printed financial card, visual identity card, health indicator, tattoo sleeve</family>
+<summary>one short sentence describing the target at a high level</summary>
+<cue>one or two coarse noun phrases only</cue>
+<null>yes or no</null>
+
+Rules:
+- Prefer broad family language over exact category names.
+- Do not use fine-grained subtype terms unless the object identity is unambiguous.
+- Keep <cue> broad, such as printed document, card, health product, bottle, test device, box, newspaper.
+- If no likely private target appears, output <null>yes</null> and keep <cue>empty</cue>.
+- Do not output any extra text.

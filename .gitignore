@@ -13,3 +13,17 @@ models/
 checkpoints/
 third_party/
 .DS_Store
+
+# Experiment outputs (large generated files)
+outputs_longrun/
+outputs_postpull/
+
+# Dataset files
+data/vizwiz_object_localization/
+
+# Generated analysis outputs
+analysis/
+
+# Machine-specific
+sitecustomize.py
+~/
