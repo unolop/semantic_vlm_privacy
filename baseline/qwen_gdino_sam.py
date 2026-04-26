@@ -13,9 +13,20 @@ import numpy as np
 import torch
 from torchvision import ops
 
+<<<<<<< Updated upstream
 from common.vlm import DEFAULT_INSTRUCTION, SwiftVLMCaller
 from common.model_loaders import load_groundingdino_model, load_sam_model
 from common.text_utils import parse_response, preprocess_caption
+=======
+REPO_ROOT = Path(__file__).resolve().parents[1]
+LLM2SEG_DIR = Path(os.environ.get('LLM2SEG_DIR', REPO_ROOT / 'third_party' / 'LLM2Seg'))
+if str(LLM2SEG_DIR) not in sys.path:
+    sys.path.insert(0, str(LLM2SEG_DIR))
+
+from call_vlm import DEFAULT_INSTRUCTION, SwiftVLMCaller  # noqa: E402
+from models import load_groundingdino_model, load_sam_model  # noqa: E402
+from utils import parse_response, preprocess_caption  # noqa: E402
+>>>>>>> Stashed changes
 
 
 SUPPORT_QUERY_PROMPT = """
@@ -281,31 +292,26 @@ class SamSegmenter:
             return []
         image = mmcv.imread(image_path, channel_order='rgb')
         image_np = np.array(image)
+        self.predictor.set_image(image_np)
         results: list[dict[str, Any]] = []
-        try:
-            with torch.inference_mode():
-                self.predictor.set_image(image_np)
-                for det in detections:
-                    xyxy = np.array(det.xyxy, dtype=np.float32)[None, :]
-                    masks, _, _ = self.predictor.predict(
-                        box=xyxy,
-                        point_coords=None,
-                        point_labels=None,
-                        multimask_output=False,
-                    )
-                    x1, y1, x2, y2 = det.xyxy
-                    results.append({
-                        'image_id': image_id,
-                        'score': det.score,
-                        'category_id': det.category_id,
-                        'bbox': [x1, y1, x2 - x1, y2 - y1],
-                        'area': float((x2 - x1) * (y2 - y1)),
-                        'segmentation': self._mask_to_coco_polygon(masks[0]),
-                        'label_text': det.label_text,
-                    })
-        finally:
-            if hasattr(self.predictor, 'reset_image'):
-                self.predictor.reset_image()
+        for det in detections:
+            xyxy = np.array(det.xyxy, dtype=np.float32)[None, :]
+            masks, _, _ = self.predictor.predict(
+                box=xyxy,
+                point_coords=None,
+                point_labels=None,
+                multimask_output=False,
+            )
+            x1, y1, x2, y2 = det.xyxy
+            results.append({
+                'image_id': image_id,
+                'score': det.score,
+                'category_id': det.category_id,
+                'bbox': [x1, y1, x2 - x1, y2 - y1],
+                'area': float((x2 - x1) * (y2 - y1)),
+                'segmentation': self._mask_to_coco_polygon(masks[0]),
+                'label_text': det.label_text,
+            })
         return results
 
 

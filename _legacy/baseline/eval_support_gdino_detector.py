@@ -14,10 +14,13 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+<<<<<<< Updated upstream
 from common.overlay_utils import draw_gt_annotation, draw_xywh_box, load_display_image, xywh_to_xyxy
 from baseline.qwen_gdino_sam import GroundingDinoLocalizer
 
 
+=======
+>>>>>>> Stashed changes
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description='Evaluate detector-only G-DINO on BIV support images.')
     parser.add_argument('--support-dir', required=True)
@@ -59,6 +62,8 @@ def compute_iou_xyxy(box_a: list[float], box_b: list[float]) -> float:
 
 
 def save_overlay(image_path: Path, ann: dict[str, Any], results: list[dict[str, Any]], output_dir: Path) -> None:
+    from common.overlay_utils import draw_gt_annotation, draw_xywh_box, load_display_image
+
     image = load_display_image(image_path)
     draw = ImageDraw.Draw(image)
     draw_gt_annotation(draw, ann, label=None, bbox_color='lime', polygon_color='yellow')
@@ -71,6 +76,9 @@ def save_overlay(image_path: Path, ann: dict[str, Any], results: list[dict[str, 
 
 def main() -> None:
     args = parse_args()
+
+    from baseline.qwen_gdino_sam import GroundingDinoLocalizer
+    from common.overlay_utils import xywh_to_xyxy
     output_dir = resolve_output_dir(args.output_dir, args.flat_output, args.date_tag, args.run_id)
     output_dir.mkdir(parents=True, exist_ok=True)
 
